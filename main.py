@@ -17,7 +17,7 @@ from google.cloud.vision_v1 import types as vision_types
 
 
 APP_TITLE = "Heat Exchanger Stock Manager"
-LOCAL_REDIRECT_URI = "http://192.168.1.102:8501"
+LOCAL_REDIRECT_URI = st.secrets["google"]["redirect_uri"]
 
 
 def _get_secret(path: List[str], default: Optional[str] = None) -> str:
