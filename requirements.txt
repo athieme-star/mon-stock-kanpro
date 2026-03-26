@@ -1,0 +1,5 @@
+Plaintext
+streamlit
+google-cloud-vision
+google-auth-oauthlib
+gspread
