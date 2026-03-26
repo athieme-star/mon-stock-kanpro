@@ -1,5 +1,6 @@
-Plaintext
 streamlit
-google-cloud-vision
-google-auth-oauthlib
+pandas
 gspread
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
