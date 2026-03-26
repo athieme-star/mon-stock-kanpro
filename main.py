@@ -6,18 +6,25 @@ from google.cloud import vision
 from google_auth_oauthlib.flow import Flow
 import os
 
-# --- CONFIGURATION DE L'APPLICATION ---
-st.set_page_config(page_title="Gestionnaire de Stock Kanpro", layout="centered")
+# --- CONFIGURATION INITIALE ---
+st.set_page_config(page_title="Stock Kanpro", layout="centered")
 
-# 1. Gestion des URLs de redirection (Automatique)
+# --- GESTION DE LA CONNEXION (AUTO-DETECTION) ---
+# Cette partie décide seule si elle utilise l'adresse locale ou l'adresse internet
 if st.runtime.exists():
-    # Détecte si on est en local ou sur le Web
-    is_local = "localhost" in st.get_option("browser.serverAddress") or "127.0.0.1" in st.get_option("browser.serverAddress")
-    redirect_uri = "http://localhost:8501" if is_local else st.secrets["google"]["redirect_uri"]
+    try:
+        # On tente de voir si on est en local
+        addr = st.get_option("browser.serverAddress")
+        if "localhost" in addr or "127.0.0.1" in addr:
+            redirect_uri = "http://localhost:8501"
+        else:
+            redirect_uri = st.secrets["google"]["redirect_uri"]
+    except:
+        # Par défaut on prend l'adresse officielle des secrets
+        redirect_uri = st.secrets["google"]["redirect_uri"]
 else:
     redirect_uri = st.secrets["google"]["redirect_uri"]
 
-# 2. Configuration Google OAuth
 client_config = {
     "web": {
         "client_id": st.secrets["google"]["client_id"],
@@ -34,59 +41,49 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly"
 ]
 
-# --- LOGIQUE DE CONNEXION ---
+# --- LOGIQUE D'AUTHENTIFICATION ---
 if 'auth_code' not in st.session_state:
     st.session_state.auth_code = None
 
-query_params = st.query_params
-if "code" in query_params and not st.session_state.auth_code:
-    st.session_state.auth_code = query_params["code"]
+# Récupération du code de retour de Google
+params = st.query_params
+if "code" in params and not st.session_state.auth_code:
+    st.session_state.auth_code = params["code"]
 
 if not st.session_state.auth_code:
     flow = Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=redirect_uri)
     auth_url, _ = flow.authorization_url(prompt='consent')
-    st.title("🔐 Connexion Requise")
+    st.title("🔐 Connexion au Stock")
+    st.write("Veuillez vous connecter pour accéder au scanner.")
     st.link_button("Se connecter avec Google", auth_url)
     st.stop()
 
-# --- INTERFACE PRINCIPALE ---
-st.title("📦 Gestionnaire de Stock")
+# --- INTERFACE APRES CONNEXION ---
+st.title("📦 Scanner de Stock")
 
-# 📸 SECTION PHOTO (Remplacement du scanner live)
-st.subheader("📸 Prendre une photo de l'étiquette")
-img_file_buffer = st.camera_input("Prendre une photo nette")
+# 📸 LE NOUVEAU BOUTON PHOTO
+st.subheader("Prendre une photo de l'étiquette")
+photo = st.camera_input("Cadrez bien l'étiquette et déclenchez")
 
-if img_file_buffer is not None:
-    with st.spinner('Analyse de l\'étiquette par Google Vision...'):
-        content = img_file_buffer.getvalue()
-        
-        # Initialisation de l'IA Google Vision
+if photo is not None:
+    with st.spinner('Analyse de l\'image...'):
+        # Envoi à Google Vision
         client = vision.ImageAnnotatorClient()
-        image = vision.Image(content=content)
-        
-        # Détection du texte et des codes
+        image = vision.Image(content=photo.getvalue())
         response = client.text_detection(image=image)
         texts = response.text_annotations
         
         if texts:
-            resultat_brut = texts[0].description
-            st.success("Lecture terminée !")
+            resultat = texts[0].description
+            st.success("Texte lu avec succès !")
             
-            # Formulaire de saisie avec les données lues
-            with st.form("validation_stock"):
-                st.text_area("Texte détecté :", resultat_brut, height=100)
-                reference = st.text_input("Référence Produit (extraite ou manuelle)")
-                quantite = st.number_input("Quantité", min_value=1, value=1)
+            with st.form("form_stock"):
+                st.text_area("Texte détecté", resultat, height=150)
+                ref = st.text_input("Confirmer la Référence")
+                qte = st.number_input("Quantité", min_value=1, value=1)
                 
-                submitted = st.form_submit_button("Enregistrer dans Google Sheets")
-                
-                if submitted:
-                    # Ici la logique d'envoi vers GSpread (à adapter selon tes colonnes)
-                    st.info(f"Enregistrement de {quantite} x {reference}...")
-                    # [Logique GSpread ici]
+                if st.form_submit_button("Valider l'entrée en stock"):
                     st.balloons()
+                    st.info(f"Enregistré : {qte} x {ref}")
         else:
-            st.error("Impossible de lire l'étiquette. Essayez d'être plus stable ou d'avoir plus de lumière.")
-
-st.divider()
-st.info("Utilisez le bouton ci-dessus pour scanner vos produits. L'IA lira automatiquement les références.")
+            st.warning("Aucun texte détecté. Essayez de vous rapprocher de l'étiquette.")
