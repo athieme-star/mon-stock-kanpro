@@ -1,65 +1,63 @@
 import streamlit as st
-import pandas as pd
-from google.cloud import vision
-import io
+import requests
+import base64
+import gspread
+from google.oauth2.service_account import Credentials
 
-# --- CONFIGURATION ---
-PROJECT_ID = "coral-theme-491310-h9"
+# --- 1. CONFIGURATION ---
+API_KEY = st.secrets["google"]["api_key"]
+SHEET_ID = st.secrets["google"]["sheet_id"]
 
 st.set_page_config(page_title="Stock Kanpro", layout="centered")
 
-# --- STYLE POUR GROS BOUTONS ---
-st.markdown("""
-    <style>
-    .stButton>button {
-        width: 100%;
-        height: 3em;
-        font-size: 20px !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+# Fonction pour envoyer les données vers Google Sheets
+def save_to_google_sheets(ref, qte):
+    try:
+        # Utilisation des secrets pour s'authentifier sur Google Sheets
+        # Note : Assure-toi que ton compte de service a accès au fichier Sheet
+        scope = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(SHEET_ID).worksheet(st.secrets["google"]["worksheet_name"])
+        sheet.append_row([ref, qte]) # Ajoute une ligne à la fin
+        return True
+    except Exception as e:
+        st.error(f"Erreur d'enregistrement Sheet : {e}")
+        return False
 
-st.title("📦 Scanner de Stock")
+st.title("📦 Scanner de Stock Kanpro")
 
-# --- LE BOUTON MAGIQUE (NATIF) ---
-# Ce bouton ouvre l'application photo réelle du téléphone
-photo_file = st.file_uploader("📸 CLIQUEZ ICI POUR SCANNER", type=['jpg', 'png', 'jpeg'])
+# --- 2. PRISE DE PHOTO ---
+photo_file = st.file_uploader("📸 CLIQUEZ ICI POUR SCANNER", type=['jpg', 'jpeg', 'png'])
 
 if photo_file is not None:
-    # Affichage de la photo pour vérifier la qualité
     st.image(photo_file, caption="Photo capturée", use_container_width=True)
     
-    with st.spinner('Analyse de l\'étiquette par l\'IA...'):
+    with st.spinner('Analyse de l\'étiquette...'):
         try:
-            # CONNEXION A L'IA (Utilise les secrets pour l'auth)
-            # On crée les credentials à partir des secrets Streamlit
-            import json
-            from google.oauth2 import service_account
+            # IA Google Vision
+            base64_image = base64.b64encode(photo_file.getvalue()).decode('utf-8')
+            url = f"https://vision.googleapis.com/v1/images:annotate?key={API_KEY}"
+            payload = {
+                "requests": [{"image": {"content": base64_image}, "features": [{"type": "TEXT_DETECTION"}]}]
+            }
+            response = requests.post(url, json=payload)
+            data = response.json()
             
-            # Récupération des infos de service_account dans les secrets
-            info = json.loads(st.secrets["textkey"])
-            creds = service_account.Credentials.from_service_account_info(info)
-            client = vision.ImageAnnotatorClient(credentials=creds)
-            
-            content = photo_file.getvalue()
-            image = vision.Image(content=content)
-            
-            response = client.text_detection(image=image)
-            texts = response.text_annotations
-            
-            if texts:
-                resultat = texts[0].description
-                st.success("✅ Lecture réussie !")
+            if 'textAnnotations' in data['responses'][0]:
+                resultat = data['responses'][0]['textAnnotations'][0]['description']
+                st.success("✅ Texte lu avec succès !")
                 
-                with st.form("validation"):
-                    ref_finale = st.text_input("Référence détectée", value=resultat.split('\n')[0])
-                    quantite = st.number_input("Quantité", min_value=1, value=1)
-                    if st.form_submit_button("VALIDER L'ENTRÉE"):
-                        st.balloons()
-                        st.success(f"Enregistré : {quantite} x {ref_finale}")
+                # Formulaire de validation
+                with st.form("valider_stock"):
+                    ref = st.text_input("Référence détectée", value=resultat.split('\n')[0])
+                    qte = st.number_input("Quantité", min_value=1, value=1)
+                    
+                    if st.form_submit_button("CONFIRMER L'ENREGISTREMENT"):
+                        if save_to_google_sheets(ref, qte):
+                            st.balloons()
+                            st.success(f"Enregistré dans le Google Sheet : {qte} x {ref}")
             else:
-                st.warning("⚠️ Aucun texte trouvé. Essayez de reprendre la photo plus près.")
-                
+                st.warning("⚠️ Impossible de lire le texte. Réessayez de plus près.")
         except Exception as e:
-            st.error(f"Erreur technique : {e}")
-            st.info("Avez-vous ajouté la 'textkey' dans les Secrets Streamlit ?")
+            st.error(f"Erreur : {e}")
