@@ -13,77 +13,72 @@ except:
 
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSdsdTn7Rgp2ujd6jAQkd5bqDLPVcHdwMxTLgy0j4e1ZUODqLw/formResponse"
 
-st.title("📦 Scanner Kanpro v6.0")
+st.title("📦 Scanner Kanpro v7.0")
+
+# Initialisation de la mémoire (Session State)
+if 'item' not in st.session_state: st.session_state.item = ""
+if 'type' not in st.session_state: st.session_state.type = ""
+if 'serial' not in st.session_state: st.session_state.serial = ""
 
 photo = st.file_uploader("📸 SCANNER L'ÉTIQUETTE", type=['jpg', 'jpeg', 'png'])
 
 if photo is not None:
     image = Image.open(photo)
-    image.thumbnail((1200, 1200)) 
+    image.thumbnail((1000, 1000)) 
     st.image(image, use_container_width=True)
 
-    if st.button("🔍 ANALYSER ET REMPLIR"):
+    if st.button("🔍 1. ANALYSER L'IMAGE"):
         try:
             buffered = io.BytesIO()
             image.save(buffered, format="JPEG")
             img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
             
             api_url = f"https://vision.googleapis.com/v1/images:annotate?key={API_KEY}"
-            payload = {
-                "requests": [{
-                    "image": {"content": img_str},
-                    "features": [{"type": "TEXT_DETECTION"}, {"type": "BARCODE_DETECTION"}]
-                }]
-            }
+            payload = {"requests": [{"image": {"content": img_str}, "features": [{"type": "TEXT_DETECTION"}, {"type": "BARCODE_DETECTION"}]}]}
             
-            with st.spinner("Tri des données..."):
+            with st.spinner("L'IA travaille..."):
                 res = requests.post(api_url, json=payload, timeout=20)
                 data = res.json()
 
-            # --- EXTRACTION ROBUSTE ---
-            barcodes = []
+            # --- EXTRACTION ET MISE EN MÉMOIRE ---
+            codes = []
             if 'responses' in data and 'barcodeAnnotations' in data['responses'][0]:
-                for b in data['responses'][0]['barcodeAnnotations']:
-                    barcodes.append(b.get('rawValue', ''))
+                codes = [b.get('rawValue', '') for b in data['responses'][0]['barcodeAnnotations']]
             
-            texte_complet = ""
-            type_detecte = ""
+            txt = ""
             if 'responses' in data and 'textAnnotations' in data['responses'][0]:
-                texte_complet = data['responses'][0]['textAnnotations'][0]['description']
-                # On cherche le Type de façon plus large
-                for ligne in texte_complet.split('\n'):
-                    if "TYPE" in ligne.upper():
-                        type_detecte = ligne.upper().split("TYPE")[-1].strip(": ").strip()
-
-            # --- RANGEMENT DANS LES VARIABLES ---
-            # Si on a trouvé des codes barres, on les met dans l'ordre
-            val_item = barcodes[0] if len(barcodes) > 0 else ""
-            val_serial = barcodes[1] if len(barcodes) > 1 else ""
+                txt = data['responses'][0]['textAnnotations'][0]['description']
             
-            # Si l'IA n'a pas vu de "Codes-barres" mais a lu du texte (chiffres)
-            # On essaie de boucher les trous avec les premières lignes lues
-            lignes = texte_complet.split('\n')
-            if not val_item and len(lignes) > 0: val_item = lignes[0]
-            if not val_serial and len(lignes) > 2: val_serial = lignes[2]
-
-            # --- AFFICHAGE DU FORMULAIRE ---
-            st.success("Analyse terminée !")
+            # On stocke dans la mémoire de l'appli
+            st.session_state.item = codes[0] if len(codes) > 0 else (txt.split('\n')[0] if txt else "")
+            st.session_state.serial = codes[1] if len(codes) > 1 else (txt.split('\n')[2] if len(txt.split('\n')) > 2 else "")
             
-            with st.form("mon_formulaire"):
-                f_item = st.text_input("📦 Item No / Barcode", value=val_item)
-                f_type = st.text_input("🏷️ Type produit", value=type_detecte)
-                f_serial = st.text_input("🔢 Serial No", value=val_serial)
-                
-                if st.form_submit_button("🚀 ENVOYER AU GOOGLE SHEET"):
-                    donnees = {
-                        "entry.460943250": f_item,
-                        "entry.1132062078": f_type,
-                        "entry.823872688": f_serial,
-                        "entry.1220447242": "Scan Final"
-                    }
-                    requests.post(FORM_URL, data=donnees)
-                    st.balloons()
-                    st.success("C'est enregistré !")
+            for ligne in txt.split('\n'):
+                if "TYPE" in ligne.upper():
+                    st.session_state.type = ligne.upper().replace("TYPE", "").strip(": ").strip()
+            
+            st.success("Analyse terminée ! Regardez les cases ci-dessous.")
 
         except Exception as e:
             st.error(f"Erreur : {e}")
+
+# --- AFFICHAGE DU FORMULAIRE (Toujours visible) ---
+st.divider()
+with st.form("form_kanpro"):
+    st.write("### 📋 Données à envoyer")
+    f_item = st.text_input("📦 Item No", value=st.session_state.item)
+    f_type = st.text_input("🏷️ Type", value=st.session_state.type)
+    f_serial = st.text_input("🔢 Serial No", value=st.session_state.serial)
+    
+    if st.form_submit_button("🚀 2. ENVOYER AU SHEET"):
+        payload = {
+            "entry.460943250": f_item,
+            "entry.1132062078": f_type,
+            "entry.823872688": f_serial,
+            "entry.1220447242": "Scan Final v7"
+        }
+        requests.post(FORM_URL, data=payload)
+        st.balloons()
+        st.success("Enregistré !")
+        # On vide la mémoire pour le prochain scan
+        st.session_state.item = ""; st.session_state.type = ""; st.session_state.serial = ""
