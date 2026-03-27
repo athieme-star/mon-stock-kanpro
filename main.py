@@ -13,7 +13,7 @@ except:
 
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSdsdTn7Rgp2ujd6jAQkd5bqDLPVcHdwMxTLgy0j4e1ZUODqLw/formResponse"
 
-st.title("📦 Scanner Kanpro v10.0")
+st.title("📦 Scanner Kanpro v11.0")
 
 if 'item' not in st.session_state: st.session_state.item = ""
 if 'type' not in st.session_state: st.session_state.type = ""
@@ -35,14 +35,12 @@ if photo is not None:
             api_url = f"https://vision.googleapis.com/v1/images:annotate?key={API_KEY}"
             payload = {"requests": [{"image": {"content": img_str}, "features": [{"type": "TEXT_DETECTION"}, {"type": "BARCODE_DETECTION"}]}]}
             
-            with st.spinner("Extraction de précision..."):
-                res = requests.post(api_url, json=payload, timeout=20)
-                data = res.json()
+            res = requests.post(api_url, json=payload, timeout=20)
+            data = res.json()
 
-            # --- EXTRACTION ---
+            # --- RÉCUPÉRATION DES DONNÉES ---
             barcodes = []
             if 'responses' in data and 'barcodeAnnotations' in data['responses'][0]:
-                # On récupère tous les codes-barres trouvés
                 barcodes = [b.get('rawValue', '') for b in data['responses'][0]['barcodeAnnotations']]
             
             txt_brut = ""
@@ -51,34 +49,35 @@ if photo is not None:
             
             lignes = [l.strip() for l in txt_brut.split('\n') if l.strip()]
 
-            # --- LOGIQUE DE TRI "V10" ---
+            # --- LOGIQUE DE TRI "NETTOYEUR" ---
+            mots_interdits = ["SWEP", "COMPANY", "ITEM", "NO", "MADE IN", "PRODUCT"]
             
-            # 1. ITEM NO : On prend le PREMIER code-barre détecté
-            # Si pas de code-barre, on prend la 1ère ligne qui n'est pas "SWEP" ou "ITEM"
-            item_val = ""
-            if len(barcodes) > 0:
-                item_val = barcodes[0]
-            else:
-                for l in lignes:
-                    if "SWEP" not in l.upper() and "ITEM" not in l.upper() and "TYPE" not in l.upper():
-                        item_val = l
-                        break
+            # 1. On filtre les lignes de texte pour ne garder que les "vraies" valeurs
+            lignes_propres = []
+            for l in lignes:
+                if not any(m in l.upper() for m in mots_interdits):
+                    lignes_propres.append(l)
 
-            # 2. SERIAL NO : On prend le DEUXIÈME code-barre détecté
-            serial_val = ""
-            if len(barcodes) > 1:
-                serial_val = barcodes[1]
-            else:
-                # Si l'IA n'a vu qu'un seul code-barre, le serial est peut-être dans le texte
-                # On prend la dernière ligne du bloc de texte
-                serial_val = lignes[-1] if len(lignes) > 1 else ""
-
-            # 3. TYPE : On cherche le mot "TYPE" et on prend ce qui suit
+            # 2. Attribution TYPE (on cherche la ligne qui contient "TYPE")
             type_val = ""
             for l in lignes:
                 if "TYPE" in l.upper():
                     type_val = l.upper().split("TYPE")[-1].strip(": ").strip()
                     break
+
+            # 3. Attribution ITEM NO (Priorité au 1er barcode, sinon 1ère ligne propre)
+            item_val = ""
+            if len(barcodes) > 0:
+                item_val = barcodes[0]
+            elif len(lignes_propres) > 0:
+                item_val = lignes_propres[0]
+
+            # 4. Attribution SERIAL NO (Priorité au 2e barcode, sinon dernière ligne propre)
+            serial_val = ""
+            if len(barcodes) > 1:
+                serial_val = barcodes[1]
+            elif len(lignes_propres) > 1:
+                serial_val = lignes_propres[-1]
 
             # --- MISE À JOUR MÉMOIRE ---
             st.session_state.item = item_val
@@ -92,13 +91,13 @@ if photo is not None:
 
 # --- FORMULAIRE ---
 st.divider()
-with st.form("form_v10"):
+with st.form("form_v11"):
     f_item = st.text_input("📦 Item No / Barcode", value=st.session_state.item)
     f_type = st.text_input("🏷️ Type produit", value=st.session_state.type)
     f_serial = st.text_input("🔢 Serial No", value=st.session_state.serial)
     
     if st.form_submit_button("🚀 ENVOYER AU SHEET"):
-        p = {"entry.460943250": f_item, "entry.1132062078": f_type, "entry.823872688": f_serial, "entry.1220447242": "Scan v10"}
+        p = {"entry.460943250": f_item, "entry.1132062078": f_type, "entry.823872688": f_serial, "entry.1220447242": "Scan v11"}
         requests.post(FORM_URL, data=p)
         st.balloons()
         st.success("Données envoyées !")
