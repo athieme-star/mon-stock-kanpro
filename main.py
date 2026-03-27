@@ -11,30 +11,24 @@ except:
     st.error("❌ CLÉ API MANQUANTE dans les Secrets.")
     st.stop()
 
-st.title("📦 Scanner Kanpro - Force Brute")
+FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSdsdTn7Rgp2ujd6jAQkd5bqDLPVcHdwMxTLgy0j4e1ZUODqLw/formResponse"
+
+st.title("📦 Scanner de Stock Kanpro")
 
 # --- 2. CAPTURE ---
-photo = st.file_uploader("📸 PRENDRE LA PHOTO", type=['jpg', 'jpeg', 'png'])
+photo = st.file_uploader("📸 SCANNER L'ÉTIQUETTE", type=['jpg', 'jpeg', 'png'])
 
 if photo is not None:
-    # --- OPTIMISATION DE L'IMAGE ---
-    # On ouvre l'image avec PIL pour s'assurer qu'elle existe vraiment
     image = Image.open(photo)
-    
-    # On la redimensionne légèrement pour qu'elle passe mieux sur le réseau
     image.thumbnail((1200, 1200)) 
-    
-    # On l'affiche sur l'écran pour CONFIRMER que le site la voit
-    st.image(image, caption="Image prête pour l'analyse", use_container_width=True)
+    st.image(image, caption="Photo prête", use_container_width=True)
 
-    if st.button("🔍 ANALYSER L'IMAGE MAINTENANT"):
+    if st.button("🔍 ANALYSER ET TRIER"):
         try:
-            # Conversion de l'image traitée en Base64
             buffered = io.BytesIO()
             image.save(buffered, format="JPEG")
             img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
             
-            # Appel Google Vision
             api_url = f"https://vision.googleapis.com/v1/images:annotate?key={API_KEY}"
             payload = {
                 "requests": [{
@@ -43,25 +37,59 @@ if photo is not None:
                 }]
             }
             
-            with st.spinner("L'IA déchiffre..."):
+            with st.spinner("Tri des données en cours..."):
                 res = requests.post(api_url, json=payload, timeout=20)
                 data = res.json()
 
-            # --- RÉSULTATS ---
-            st.divider()
+            # --- 3. LOGIQUE DE TRI (LE RANGEMENT) ---
             
-            # Récupération texte
-            texte_final = ""
+            # A. Extraction des Codes-barres
+            barcodes = []
+            if 'responses' in data and 'barcodeAnnotations' in data['responses'][0]:
+                for b in data['responses'][0]['barcodeAnnotations']:
+                    barcodes.append(b.get('rawValue', ''))
+            
+            # On attribue selon ta description : Item No (1er), Serial No (2e)
+            item_val = barcodes[0] if len(barcodes) > 0 else ""
+            serial_val = barcodes[1] if len(barcodes) > 1 else ""
+
+            # B. Extraction du "Type" dans le texte
+            type_val = ""
             if 'responses' in data and 'textAnnotations' in data['responses'][0]:
-                texte_final = data['responses'][0]['textAnnotations'][0]['description']
-                st.success("✅ Texte détecté !")
-                st.code(texte_final)
-            else:
-                st.error("❌ L'IA ne voit toujours aucun texte.")
-                st.write("DEBUG DATA:", data) # Pour voir si Google renvoie une erreur
+                texte_brut = data['responses'][0]['textAnnotations'][0]['description']
+                for ligne in texte_brut.split('\n'):
+                    if "TYPE" in ligne.upper():
+                        # On nettoie la ligne pour ne garder que la valeur
+                        type_val = ligne.upper().replace("TYPE", "").strip(": ").strip()
+
+            # --- 4. AFFICHAGE DES CHAMPS REMPLIS ---
+            st.success("✅ Données extraites !")
+            
+            with st.form("form_final"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    f_item = st.text_input("📦 Item No / Barcode", value=item_no_val if 'item_no_val' in locals() else item_val)
+                    f_type = st.text_input("🏷️ Type produit", value=type_val)
+                with col2:
+                    f_serial = st.text_input("🔢 Serial No (Unique)", value=serial_val)
+                    f_note = st.text_input("📌 Note", value="Scan Mobile OK")
+
+                if st.form_submit_button("🚀 ENVOYER AU GOOGLE SHEET"):
+                    payload_form = {
+                        "entry.460943250": f_item,
+                        "entry.1132062078": f_type,
+                        "entry.823872688": f_serial,
+                        "entry.1220447242": f_note
+                    }
+                    r_send = requests.post(FORM_URL, data=payload_form)
+                    if r_send.status_code == 200:
+                        st.balloons()
+                        st.success("Enregistré dans le tableau ! 🥳")
+                    else:
+                        st.error("Erreur d'envoi au Google Sheet.")
 
         except Exception as e:
-            st.error(f"Erreur technique : {e}")
+            st.error(f"Erreur : {e}")
 
 st.divider()
-st.caption("Version 4.0 - Image Optimization Enabled")
+st.caption("Système de tri automatique Kanpro v5.0")
